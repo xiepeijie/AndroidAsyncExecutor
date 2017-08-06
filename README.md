@@ -1,0 +1,2 @@
+# AndroidAsyncExecutor
+一个类似AsyncTask的异步任务执行者
