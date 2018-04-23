@@ -64,7 +64,7 @@ public final class AsyncExecutor implements Handler.Callback {
         execute(null, callback);
     }
 
-    public void execute(final Activity activity, final AsyncCallback<?> callback) {
+    public <T> void execute(final Activity activity, final AsyncCallback<T> callback) {
         if (callback == null) return;
         int hashCode;
         if (activity == null) {
@@ -168,7 +168,7 @@ public final class AsyncExecutor implements Handler.Callback {
 
     public static abstract class AsyncCallback<T> {
         protected boolean stop = false;
-        Object t;
+        T t;
         protected void runBefore(){}
         protected abstract T running();
         protected abstract void runAfter(T t);
