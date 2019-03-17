@@ -1,20 +1,14 @@
 package me.payge.startapp;
 
 import android.os.Bundle;
+import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
-
-import com.trello.rxlifecycle2.components.support.RxAppCompatActivity;
-
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
 
 import me.payge.startapp.execute.AsyncExecutor;
 
-public class HomeActivity extends RxAppCompatActivity {
+public class HomeActivity extends AppCompatActivity {
 
     private static final String TAG = "home";
-    private List<AsyncExecutor.AsyncCallback> callbacks = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,20 +45,37 @@ public class HomeActivity extends RxAppCompatActivity {
                     Log.i(TAG, "runAfter: " + s);
                 }
             };
-            callbacks.add(callback);
             AsyncExecutor.getInstance().execute(this, callback);
         }
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        Log.i(TAG, "onStart");
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        Log.i(TAG, "onPause");
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Log.i(TAG, "onResume");
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        Log.i(TAG, "onStop");
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
-        Iterator<AsyncExecutor.AsyncCallback> iterator = callbacks.iterator();
-        while (iterator.hasNext()) {
-            AsyncExecutor.AsyncCallback callback = iterator.next();
-            AsyncExecutor.getInstance().cancel(callback);
-            iterator.remove();
-        }
-        Log.i(TAG, "onDestroy: ");
+        Log.i(TAG, "onDestroy");
     }
 }

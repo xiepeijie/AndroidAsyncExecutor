@@ -1,13 +1,13 @@
 package me.payge.startapp.execute;
 
 
-import android.app.Activity;
-import android.app.Application;
-import android.os.Bundle;
+import android.arch.lifecycle.GenericLifecycleObserver;
+import android.arch.lifecycle.Lifecycle;
+import android.arch.lifecycle.LifecycleOwner;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.support.v4.app.Fragment;
+import android.util.Log;
 import android.util.SparseArray;
 
 import java.util.ArrayList;
@@ -16,22 +16,13 @@ import java.util.ListIterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public final class AsyncExecutor implements Handler.Callback, Application.ActivityLifecycleCallbacks {
-
-    public static final int ON_CREATE = 11;
-    public static final int ON_START = 12;
-    public static final int ON_RESUME = 13;
-    public static final int ON_PAUSE = 14;
-    public static final int ON_STOP = 15;
-    public static final int ON_DESTROY = 16;
+public final class AsyncExecutor implements Handler.Callback, GenericLifecycleObserver {
 
     private Handler mainHandler;
     private ExecutorService threadPool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
     private SparseArray<AsyncCallback> commonCallbackCache = new SparseArray<>();
-    private SparseArray<List<AsyncCallback>> activityCallbackCache = new SparseArray<>();
-    private boolean isRegisterLifecycle;
-    private int stopOnLifecycleEvent = ON_DESTROY;
-    private List<Lifecycle> lifecycles = new ArrayList<>();
+    private SparseArray<List<AsyncCallback>> lifecycleOwnerCallbackCache = new SparseArray<>();
+    private Lifecycle.Event stopOnLifecycleEvent = Lifecycle.Event.ON_DESTROY;
 
     private static class InnerHolder {
         static final AsyncExecutor executor = new AsyncExecutor();
@@ -43,12 +34,12 @@ public final class AsyncExecutor implements Handler.Callback, Application.Activi
         mainHandler = new Handler(Looper.getMainLooper(), this);
     }
 
-    public void registerLifecycle(Lifecycle lifecycle) {
-        this.lifecycles.add(lifecycle);
+    private void registerLifecycle(LifecycleOwner owner) {
+        owner.getLifecycle().addObserver(this);
     }
 
-    public void unregisterLifecycle(Lifecycle lifecycle) {
-        this.lifecycles.remove(lifecycle);
+    private void unregisterLifecycle(LifecycleOwner owner) {
+        owner.getLifecycle().removeObserver(this);
     }
 
     @Override
@@ -59,11 +50,11 @@ public final class AsyncExecutor implements Handler.Callback, Application.Activi
                 if (callback.stop) return true;
                 callback.runAfter(callback.t);
                 commonCallbackCache.remove(msg.what);
-                List<AsyncCallback> list = activityCallbackCache.get(msg.what);
+                List<AsyncCallback> list = lifecycleOwnerCallbackCache.get(msg.what);
                 if (list != null) {
                     list.remove(callback);
                     if (list.isEmpty()) {
-                        activityCallbackCache.remove(msg.what);
+                        lifecycleOwnerCallbackCache.remove(msg.what);
                     }
                 }
             }
@@ -86,24 +77,14 @@ public final class AsyncExecutor implements Handler.Callback, Application.Activi
             }
         } else {
             hashCode = tag.hashCode();
-            if (!isRegisterLifecycle) {
-                if (tag instanceof Activity) {
-                    isRegisterLifecycle = true;
-                    Activity activity = (Activity) tag;
-                    activity.getApplication().registerActivityLifecycleCallbacks(this);
-                } else if (tag instanceof Fragment) {
-                    isRegisterLifecycle = true;
-                    Fragment fragment = (Fragment) tag;
-                    Activity activity = fragment.getActivity();
-                    if (activity != null) {
-                        activity.getApplication().registerActivityLifecycleCallbacks(this);
-                    }
-                }
+            if (tag instanceof LifecycleOwner) {
+                LifecycleOwner ui = (LifecycleOwner) tag;
+                registerLifecycle(ui);
             }
-            List<AsyncCallback> list = activityCallbackCache.get(hashCode);
+            List<AsyncCallback> list = lifecycleOwnerCallbackCache.get(hashCode);
             if (list == null) {
                 list = new ArrayList<>();
-                activityCallbackCache.put(hashCode, list);
+                lifecycleOwnerCallbackCache.put(hashCode, list);
             }
             if (!list.contains(callback)) {
                 list.add(callback);
@@ -134,7 +115,7 @@ public final class AsyncExecutor implements Handler.Callback, Application.Activi
     }
 
     public void cancel(Object tag) {
-        List<AsyncCallback> list = activityCallbackCache.get(tag.hashCode());
+        List<AsyncCallback> list = lifecycleOwnerCallbackCache.get(tag.hashCode());
         if (list != null) {
             mainHandler.removeMessages(tag.hashCode());
             ListIterator<AsyncCallback> iterator = list.listIterator();
@@ -147,97 +128,39 @@ public final class AsyncExecutor implements Handler.Callback, Application.Activi
         }
     }
 
-    /**
-     * @param onLifecycleEvent {@link AsyncExecutor#ON_START}, {@link AsyncExecutor#ON_RESUME},
-     * {@link AsyncExecutor#ON_PAUSE}, {@link AsyncExecutor#ON_STOP}, {@link AsyncExecutor#ON_DESTROY}
-     */
-    public void setStopOnLifecycleEvent(int onLifecycleEvent) {
-        if (onLifecycleEvent == ON_START
-                || onLifecycleEvent == ON_RESUME
-                || onLifecycleEvent == ON_PAUSE
-                || onLifecycleEvent == ON_STOP
-                || onLifecycleEvent == ON_DESTROY) {
-            this.stopOnLifecycleEvent = onLifecycleEvent;
-        }
+    private void setStopOnLifecycleEvent(Lifecycle.Event event) {
+        this.stopOnLifecycleEvent = event;
     }
 
-    private void checkStopOnLifecycleEvent(Activity activity, int onLifecycleEvent) {
-        if (stopOnLifecycleEvent == onLifecycleEvent) {
-            List<AsyncCallback> list = activityCallbackCache.get(activity.hashCode());
+    private boolean whetherStopOnLifecycleEvent(Object tag, Lifecycle.Event event) {
+        boolean stopCallback = stopOnLifecycleEvent == event;
+        if (stopCallback) {
+            List<AsyncCallback> list = lifecycleOwnerCallbackCache.get(tag.hashCode());
             if (list != null) {
-                mainHandler.removeMessages(activity.hashCode());
+                mainHandler.removeMessages(tag.hashCode());
                 for (AsyncCallback callback: list) {
                     callback.stop = true;
                 }
-                activityCallbackCache.remove(activity.hashCode());
+                lifecycleOwnerCallbackCache.remove(tag.hashCode());
             }
         }
+        return stopCallback;
     }
 
     @Override
-    public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
-        for (Lifecycle lifecycle :lifecycles) {
-            lifecycle.onCreated(activity, savedInstanceState);
-        }
-    }
-    @Override
-    public void onActivityStarted(Activity activity) {
-        checkStopOnLifecycleEvent(activity, ON_START);
-        for (Lifecycle lifecycle :lifecycles) {
-            lifecycle.onStarted(activity);
-        }
-    }
-    @Override
-    public void onActivityResumed(Activity activity) {
-        checkStopOnLifecycleEvent(activity, ON_RESUME);
-        for (Lifecycle lifecycle :lifecycles) {
-            lifecycle.onResumed(activity);
-        }
-    }
-    @Override
-    public void onActivityPaused(Activity activity) {
-        checkStopOnLifecycleEvent(activity, ON_PAUSE);
-        for (Lifecycle lifecycle :lifecycles) {
-            lifecycle.onPaused(activity);
-        }
-    }
-    @Override
-    public void onActivityStopped(Activity activity) {
-        checkStopOnLifecycleEvent(activity, ON_STOP);
-        for (Lifecycle lifecycle :lifecycles) {
-            lifecycle.onStopped(activity);
-        }
-    }
-    @Override
-    public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
-        for (Lifecycle lifecycle :lifecycles) {
-            lifecycle.onSaveInstanceState(activity, outState);
-        }
-    }
-
-    @Override
-    public void onActivityDestroyed(Activity activity) {
-        checkStopOnLifecycleEvent(activity, ON_DESTROY);
-        for (Lifecycle lifecycle :lifecycles) {
-            lifecycle.onDestroyed(activity);
+    public void onStateChanged(LifecycleOwner source, Lifecycle.Event event) {
+        Log.i("xxx", "onStateChanged: " + event);
+        if (!whetherStopOnLifecycleEvent(source, event) && event == Lifecycle.Event.ON_DESTROY) {
+            unregisterLifecycle(source);
         }
     }
 
     public static abstract class AsyncCallback<T> {
         protected boolean stop = false;
         T t;
-        protected void runBefore(){}
+        protected void runBefore() {}
         protected abstract T running();
-        protected abstract void runAfter(T t);
+        protected void runAfter(T t) {}
     }
 
-    public static abstract class Lifecycle {
-        protected void onCreated(Activity activity, Bundle bundle){}
-        protected void onStarted(Activity activity){}
-        protected void onResumed(Activity activity){}
-        protected void onPaused(Activity activity){}
-        protected void onStopped(Activity activity){}
-        protected void onSaveInstanceState(Activity activity, Bundle outState){}
-        protected void onDestroyed(Activity activity){}
-    }
 }
